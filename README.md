@@ -14,7 +14,7 @@ Before you can run the Personal Assistant, ensure you have the following prerequ
 > LangChain and related packages
 
 # Follow these steps to install:
-> git clone https://github.com/yourusername/yourrepositoryname.git
+> git clone https://github.com/BobGanti/pdfurl.git
 > cd yourrepositoryname
 > pip install -r requirements.txt
 
