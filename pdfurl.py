@@ -24,7 +24,36 @@ class DocumentChunk:
         self.page_content = page_content
         self.metadata = metadata if metadata is not None else {}
 
+# Streamlit UI and Main Workflow Functions
+def setup_streamlit_ui():
+    """Sets up Streamlit UI components."""
+    st.set_page_config(page_title="PA", page_icon="📄")
+    st.title("Personal Assistant")
+    with st.sidebar:
+        st.header("Menu")
+        uploaded_files = st.file_uploader("Upload PDFs", accept_multiple_files=True, type=['pdf'])
+        if uploaded_files:
+            st.session_state['pdf_files'] = uploaded_files
+
 # Utility Functions
+def load_sys_pdfs():
+    """Load PDF files from the default directory."""
+    SYS_PDF_DIR = os.path.join(os.path.dirname(__file__), 'system_files')
+    SYS_PDFs = []
+    for filename in os.listdir(SYS_PDF_DIR):
+        if filename.endswith(".pdf"):
+            file_path = os.path.join(SYS_PDF_DIR, filename)
+            SYS_PDFs.append(file_path)
+    return SYS_PDFs
+
+def extract_text_from_pdf(pdf_file):
+    """Extracts text from an uploaded PDF file."""
+    reader = PdfReader(pdf_file)
+    text = ''
+    for page in reader.pages:
+        text += (page.extract_text() or '') + '\n'
+    return text
+
 def chunk_text(text, chunk_size=2500):
     """Splits text into chunks without cutting words in half."""
     if len(text) <= chunk_size:
@@ -38,22 +67,47 @@ def chunk_text(text, chunk_size=2500):
         text = text[split_point:]
     return chunks
 
-def extract_text_from_pdf(pdf_file):
-    """Extracts text from an uploaded PDF file."""
-    reader = PdfReader(pdf_file)
-    text = ''
-    for page in reader.pages:
-        text += (page.extract_text() or '') + '\n'
-    return text
-
 # Core Logic Functions
 def create_vector_store_from_pdf(pdf_file):
     """Creates a vector store from an uploaded PDF file."""
     text = extract_text_from_pdf(pdf_file)
     doc_chunks = chunk_text(text)
     document_objects = [DocumentChunk(chunk) for chunk in doc_chunks]
-    vector_store = Chroma.from_documents(document_objects, OpenAIEmbeddings())
-    return vector_store
+    vectordb = Chroma.from_documents(
+        documents=document_objects, 
+        embedding=OpenAIEmbeddings(), 
+        persist_directory=os.path.join(os.path.dirname(__file__), 'system_files/vectorstores')
+    )
+    vectordb.persist()
+    return vectordb
+
+def process_pdfs(pdf_files):
+    """Processes uploaded PDF files."""
+    vectorstores = [create_vector_store_from_pdf(pdf) for pdf in pdf_files]
+
+    st.session_state['vector_stores'] = vectorstores
+
+def get_context_retriever_chain(vector_store):
+    """Creates a retriever chain for context retrieval."""
+    llm = ChatOpenAI(model_name='gpt-3.5-turbo')
+    retriever = vector_store.as_retriever(search_kwargs={"k":3})
+    prompt = ChatPromptTemplate.from_messages([
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("user", "{input}"),
+        ("user", INSTRUCTIONS)
+    ])
+    return create_history_aware_retriever(llm, retriever, prompt)
+
+def get_conversational_rag_chain(retriever_chain):
+    """Creates a chain for conversational RAG processing."""
+    llm = ChatOpenAI(model_name='gpt-3.5-turbo')
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", f"{ASSISTANT_PROFILE}:\n\n{{context}}"),
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("user", "{input}")
+    ])
+    stuff_documents_chain = create_stuff_documents_chain(llm, prompt)
+    return create_retrieval_chain(retriever_chain, stuff_documents_chain)
 
 def get_response(user_query):
     """Generates a response for the user query using the conversation chain."""
@@ -69,32 +123,6 @@ def get_response(user_query):
             responses.append(response['answer'])
         return ' '.join(responses)
     return 'Unable to process the query without a valid vector store.'
-
-# Streamlit UI and Main Workflow Functions
-def setup_streamlit_ui():
-    """Sets up Streamlit UI components."""
-    st.set_page_config(page_title="PA", page_icon="📄")
-    st.title("Personal Assistant")
-    with st.sidebar:
-        st.header("Menu")
-        uploaded_files = st.file_uploader("Upload PDFs", accept_multiple_files=True, type=['pdf'])
-        if uploaded_files:
-            st.session_state['pdf_files'] = uploaded_files
-
-def load_sys_pdfs():
-    """Load PDF files from the default directory."""
-    SYS_PDFs_DIR = os.path.join(os.path.dirname(__file__), 'system_files')
-    SYS_PDFs = []
-    for filename in os.listdir(SYS_PDFs_DIR):
-        if filename.endswith(".pdf"):
-            file_path = os.path.join(SYS_PDFs_DIR, filename)
-            SYS_PDFs.append(file_path)
-    return SYS_PDFs
-
-def process_pdfs(pdf_files):
-    """Processes uploaded PDF files."""
-    vectorstores = [create_vector_store_from_pdf(pdf) for pdf in pdf_files]
-    st.session_state['vector_stores'] = vectorstores
 
 def display_conversation():
     """Displays conversation history and input box for new queries."""
@@ -116,28 +144,6 @@ def display_conversation():
         else:
             with st.chat_message("AI"):
                 st.write(message.content)
-
-def get_context_retriever_chain(vector_store):
-    """Creates a retriever chain for context retrieval."""
-    llm = ChatOpenAI()
-    retriever = vector_store.as_retriever()
-    prompt = ChatPromptTemplate.from_messages([
-        MessagesPlaceholder(variable_name="chat_history"),
-        ("user", "{input}"),
-        ("user", INSTRUCTIONS)
-    ])
-    return create_history_aware_retriever(llm, retriever, prompt)
-
-def get_conversational_rag_chain(retriever_chain):
-    """Creates a chain for conversational RAG processing."""
-    llm = ChatOpenAI()
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", f"{ASSISTANT_PROFILE}:\n\n{{context}}"),
-        MessagesPlaceholder(variable_name="chat_history"),
-        ("user", "{input}")
-    ])
-    stuff_documents_chain = create_stuff_documents_chain(llm, prompt)
-    return create_retrieval_chain(retriever_chain, stuff_documents_chain)
 
 def main():
 
