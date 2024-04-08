@@ -78,14 +78,17 @@ def create_vector_store_from_pdf(pdf_file):
         embedding=OpenAIEmbeddings(), 
         persist_directory=os.path.join(os.path.dirname(__file__), 'system_files/vectorstores')
     )
+    st.session_state['vector_stores'] = vectordb
     vectordb.persist()
-    return vectordb
+
 
 def process_pdfs(pdf_files):
     """Processes uploaded PDF files."""
-    vectorstores = [create_vector_store_from_pdf(pdf) for pdf in pdf_files]
+    for pdf in pdf_files:
+        create_vector_store_from_pdf(pdf)
+    # vectorstores = [create_vector_store_from_pdf(pdf) for pdf in pdf_files]
 
-    st.session_state['vector_stores'] = vectorstores
+    ## st.session_state['vector_stores'] = vectorstores
 
 def get_context_retriever_chain(vector_store):
     """Creates a retriever chain for context retrieval."""
